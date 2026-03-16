@@ -3,22 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Dashcam Scanner</title>
+    <title>AI Dashcam Scanner - Visuell</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { margin: 0; font-family: sans-serif; background: #000; color: white; overflow: hidden; }
-        #video { width: 100vw; height: 100vh; object-fit: cover; }
-        #overlay { position: absolute; top: 20px; left: 0; width: 100%; text-align: center; pointer-events: none; }
-        .status { background: rgba(0,0,0,0.7); padding: 10px; border-radius: 8px; display: inline-block; }
-        #log { position: absolute; bottom: 20px; left: 10px; right: 10px; max-height: 150px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.5); }
-        .match { color: #00ff00; font-weight: bold; font-size: 1.2em; border: 2px solid #00ff00; padding: 10px; background: rgba(0,255,0,0.2); }
+        /* Der Video-Layer im Hintergrund */
+        #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; top: 0; left: 0; }
+        /* Der Canvas-Layer im Vordergrund zum Zeichnen der Rahmen */
+        #canvasOverlay { width: 100vw; height: 100vh; object-fit: cover; position: absolute; top: 0; left: 0; pointer-events: none; z-index: 10; }
+        
+        #ui { position: absolute; top: 20px; left: 0; width: 100%; text-align: center; z-index: 20; pointer-events: none; }
+        .status { background: rgba(0,0,0,0.7); padding: 10px; border-radius: 8px; display: inline-block; transition: background-color 0.3s; }
+        .match { background-color: rgba(0, 255, 0, 0.5); border: 2px solid #00ff00; color: #00ff00; font-weight: bold; }
+        
+        #log { position: absolute; bottom: 20px; left: 10px; right: 10px; max-height: 120px; overflow-y: auto; font-size: 11px; background: rgba(0,0,0,0.6); z-index: 20; padding: 5px; border-radius: 5px;}
+        .log-match { color: #00ff00; }
     </style>
 </head>
 <body>
 
     <video id="video" autoplay playsinline></video>
     
-    <div id="overlay">
+    <canvas id="canvasOverlay"></canvas>
+    
+    <div id="ui">
         <div id="status-box" class="status">Kamera wird gestartet...</div>
     </div>
 
@@ -26,83 +34,149 @@
 
     <script>
         // --- DEINE WATCHLIST ---
-        const WATCHLIST = ["HBDE598", "HHRS567", "MXY999", "TEST"];
+        // Liste der gesuchten Kennzeichen (Großbuchstaben, keine Leerzeichen/Bindestriche)
+        const WATCHLIST = ["BMW123", "HHRS567", "MXY999", "TEST", "WISSEN"];
         
         const video = document.getElementById('video');
+        const canvasOverlay = document.getElementById('canvasOverlay');
+        const ctxOverlay = canvasOverlay.getContext('2d');
         const statusBox = document.getElementById('status-box');
         const log = document.getElementById('log');
 
+        let isVideoReady = false;
+
         // Kamera aktivieren
         async function startCamera() {
+            statusBox.innerText = "Warte auf Kamera-Freigabe...";
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" }, 
+                    video: { facingMode: "environment" }, // Nutzt die Rückkamera
                     audio: false 
                 });
                 video.srcObject = stream;
-                statusBox.innerText = "Scanner aktiv - Suche nach Kennzeichen...";
-                processFrame();
+                
+                // Warten, bis das Video Metadaten hat, um die Canvas-Größe anzupassen
+                video.onloadedmetadata = () => {
+                    isVideoReady = true;
+                    // Canvas-Größe an Video-Auflösung anpassen
+                    canvasOverlay.width = video.videoWidth;
+                    canvasOverlay.height = video.videoHeight;
+                    statusBox.innerText = "Scanner aktiv - Richte Kamera auf ein Kennzeichen.";
+                    processFrame();
+                };
             } catch (err) {
                 statusBox.innerText = "Fehler: Kamerazugriff verweigert!";
+                console.error(err);
             }
         }
 
-        // KI-Verarbeitung (OCR)
+        // KI-Verarbeitung (OCR) und Zeichnen
         async function processFrame() {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
+            if (!isVideoReady) return;
+
+            // Interner Canvas für die KI-Analyse (wird nicht angezeigt)
+            const canvasAI = document.createElement('canvas');
+            canvasAI.width = video.videoWidth;
+            canvasAI.height = video.videoHeight;
+            const ctxAI = canvasAI.getContext('2d');
 
             const loop = async () => {
-                // Aktuelles Bild aus Video ziehen
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                if (!isVideoReady) return;
+
+                // 1. Aktuelles Bild für die KI vorbereiten
+                ctxAI.drawImage(video, 0, 0, canvasAI.width, canvasAI.height);
                 
-                // OCR Analyse starten
-                const { data: { text } } = await Tesseract.recognize(canvas, 'eng', {
-                    // Schneller Modus für einzelne Zeilen
+                // 2. OCR Analyse starten
+                // Wir nutzen 'eng' als Sprache, da es für Kennzeichen-Fonts gut funktioniert.
+                const result = await Tesseract.recognize(canvasAI, 'eng');
+                const words = result.data.words; // Holen uns die einzelnen erkannten Worte/Blöcke
+
+                // 3. Vorherige Zeichnungen auf dem Overlay löschen
+                ctxOverlay.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+                
+                let foundMatch = false;
+
+                // 4. Jedes erkannte Wort verarbeiten
+                words.forEach(word => {
+                    // Text säubern: Nur Buchstaben und Zahlen, alles Groß
+                    const cleanText = word.text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                    
+                    // Nur verarbeiten, wenn es wie ein Kennzeichen aussieht (>3 Zeichen)
+                    if (cleanText.length > 3) {
+                        updateLog(`Gescant: ${cleanText}`);
+
+                        // Überprüfen, ob es in der Watchlist ist
+                        let isMatch = false;
+                        WATCHLIST.forEach(plate => {
+                            if (cleanText.includes(plate) || plate.includes(cleanText)) {
+                                isMatch = true;
+                            }
+                        });
+
+                        // 5. Rahmen zeichnen (Koordinaten kommen von Tesseract)
+                        const { x0, y0, x1, y1 } = word.bbox; // Die "Bounding Box" des Wortes
+                        ctxOverlay.lineWidth = 10; // Dicke des Rahmens (für Handy-Display)
+                        
+                        if (isMatch) {
+                            ctxOverlay.strokeStyle = '#00ff00'; // Grün für Treffer
+                            foundMatch = true;
+                            triggerAlarm(cleanText);
+                        } else {
+                            ctxOverlay.strokeStyle = '#ff0000'; // Rot für kein Treffer
+                        }
+                        
+                        // Rechteck zeichnen
+                        ctxOverlay.strokeRect(x0, y0, x1 - x0, y1 - y0);
+                    }
                 });
 
-                const cleanText = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                
-                if (cleanText.length > 3) {
-                    updateLog(`Gescant: ${cleanText}`);
-                    
-                    WATCHLIST.forEach(plate => {
-                        if (cleanText.includes(plate)) {
-                            triggerAlarm(plate);
-                        }
-                    });
+                // Wenn kein Match gefunden wurde, Status zurücksetzen
+                if (!foundMatch && statusBox.classList.contains('match')) {
+                    statusBox.innerText = "Scanner aktiv - Suche...";
+                    statusBox.classList.remove('match');
                 }
 
-                // Nächster Scan nach kurzer Pause
+                // Nächster Scan nach einer Sekunde
+                // Zu schnelles Scannen überhitzt das Handy
                 setTimeout(loop, 1000); 
             };
             loop();
         }
 
+        // Alarm auslösen (Visuell und Sprache)
         function triggerAlarm(plate) {
-            statusBox.innerHTML = `<div class="match">!!! TREFFER: ${plate} !!!</div>`;
-            
-            // Sprachausgabe (iOS kompatibel)
-            const msg = new SpeechSynthesisUtterance(`Achtung, Kennzeichen ${plate} erkannt`);
-            msg.lang = 'de-DE';
-            window.speechSynthesis.speak(msg);
+            if (!statusBox.classList.contains('match')) {
+                statusBox.innerHTML = `!!! TREFFER: ${plate} !!!`;
+                statusBox.classList.add('match');
+                
+                updateLog(`[ALARM] ${plate} erkannt!`, true);
 
-            // Nach 5 Sek zurücksetzen
-            setTimeout(() => {
-                statusBox.innerHTML = `<div class="status">Scanner aktiv...</div>`;
-            }, 5000);
+                // Sprachausgabe (iOS-kompatibel)
+                // WICHTIG: Erfordert oft einen Tap auf den Bildschirm, damit Ton kommt.
+                const msg = new SpeechSynthesisUtterance(`Achtung, Kennzeichen ${plate} erkannt`);
+                msg.lang = 'de-DE';
+                window.speechSynthesis.speak(msg);
+            }
         }
 
-        function updateLog(msg) {
+        // Log-Eintrag hinzufügen
+        function updateLog(msg, isMatch = false) {
             const entry = document.createElement('div');
+            if (isMatch) entry.classList.add('log-match');
             entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
             log.prepend(entry);
         }
 
-        // Start beim Laden
+        // Starten, sobald die Seite geladen ist
         window.addEventListener('load', startCamera);
+
+        // Notwendig für Sprachausgabe auf iOS: Einmal tippen, um Audio zu aktivieren
+        window.addEventListener('click', () => {
+            const msg = new SpeechSynthesisUtterance(""); // Leere Nachricht
+            window.speechSynthesis.speak(msg);
+            updateLog("Audio aktiviert.");
+        }, { once: true });
+
     </script>
 </body>
 </html>
