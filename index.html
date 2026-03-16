@@ -3,150 +3,140 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Dashcam Pro</title>
+    <title>AI Dashcam Ultra</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: -apple-system, sans-serif; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; }
         #canvasOverlay { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; }
-        
-        /* Fokus-Rahmen in der Mitte */
-        #focus-area { 
-            position: absolute; top: 50%; left: 50%; 
-            width: 80%; height: 30%; 
-            transform: translate(-50%, -50%);
-            border: 2px dashed rgba(255,255,255,0.5);
-            z-index: 15; border-radius: 10px;
-        }
-
+        #focus-area { position: absolute; top: 50%; left: 50%; width: 70%; height: 25%; transform: translate(-50%, -50%); border: 3px solid #007aff; z-index: 15; border-radius: 15px; box-shadow: 0 0 20px rgba(0,122,255,0.5); }
         #ui { position: absolute; top: 40px; width: 100%; text-align: center; z-index: 20; }
-        .badge { background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #444; font-size: 18px; }
-        .alarm { background: #ff3b30 !important; color: white; font-weight: bold; animation: pulse 0.5s infinite; }
-        
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-        
-        #btn-start { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.9); z-index: 100; display: flex; 
-            align-items: center; justify-content: center; font-size: 24px; cursor: pointer;
-        }
+        .badge { background: rgba(0,0,0,0.85); padding: 15px; border-radius: 12px; border: 1px solid #007aff; font-size: 18px; min-width: 200px; display: inline-block; }
+        .alarm { background: #ff3b30 !important; border: 2px solid white; animation: shake 0.2s infinite; }
+        @keyframes shake { 0% { transform: translateX(0); } 50% { transform: translateX(5px); } 100% { transform: translateX(0); } }
+        #start-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #007aff; z-index: 100; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
 
-    <div id="btn-start">🚀 TIPPEN ZUM STARTEN</div>
+    <div id="start-layer">STARTEN</div>
 
     <video id="video" autoplay playsinline muted></video>
     <div id="focus-area"></div>
     <canvas id="canvasOverlay"></canvas>
     
     <div id="ui">
-        <div id="status" class="badge">BEREIT</div>
+        <div id="status" class="badge">BITTE STARTEN</div>
     </div>
 
     <script>
-        const WATCHLIST = ["BMW123", "HHRS567", "MXY999", "TEST", "WISSEN"];
+        const WATCHLIST = ["BMW123", "HHRS567", "MXY999", "TEST"]; // Deine Liste
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvasOverlay');
         const ctx = canvas.getContext('2d');
         const status = document.getElementById('status');
-        const startBtn = document.getElementById('btn-start');
+        const startLayer = document.getElementById('start-layer');
 
         let worker = null;
         let isProcessing = false;
 
         async function init() {
-            startBtn.style.display = 'none';
-            status.innerText = "Kamera wird gestartet...";
+            startLayer.style.display = 'none';
+            status.innerText = "Lade KI-Hirn...";
 
             try {
+                // Kamera mit 30 FPS anfordern
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: 1280, height: 720 } 
+                    video: { facingMode: "environment", frameRate: { ideal: 30 } } 
                 });
                 video.srcObject = stream;
                 
-                status.innerText = "KI wird geladen...";
-                worker = await Tesseract.createWorker('deu'); 
-                
+                // KI Setup mit Fortschrittsanzeige
+                worker = await Tesseract.createWorker('eng', 1, {
+                    logger: m => {
+                        if (m.status === 'recognizing text') {
+                           // Nichts tun während der Erkennung
+                        } else {
+                            status.innerText = `Lade: ${Math.round(m.progress * 100)}%`;
+                        }
+                    }
+                });
+
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
-                    status.innerText = "SCANNER AKTIV";
-                    requestAnimationFrame(scan);
+                    status.innerText = "✓ SCANNER BEREIT";
+                    scanLoop();
                 };
             } catch (err) {
-                status.innerText = "Fehler: " + err.name;
-                alert("Kamerazugriff fehlgeschlagen. Nutze HTTPS!");
+                status.innerText = "Fehler: Kamera blockiert!";
+                console.error(err);
             }
         }
 
-        async function scan() {
+        async function scanLoop() {
             if (isProcessing) {
-                requestAnimationFrame(scan);
+                requestAnimationFrame(scanLoop);
                 return;
             }
             
             isProcessing = true;
 
-            // Wir schneiden nur den Fokus-Bereich aus (Performance!)
-            const cropX = video.videoWidth * 0.1;
-            const cropY = video.videoHeight * 0.35;
-            const cropW = video.videoWidth * 0.8;
-            const cropH = video.videoHeight * 0.3;
+            // EXTREM WICHTIG: Nur den Fokus-Bereich scannen
+            const cropX = video.videoWidth * 0.15;
+            const cropY = video.videoHeight * 0.375;
+            const cropW = video.videoWidth * 0.7;
+            const cropH = video.videoHeight * 0.25;
 
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = cropW;
             tempCanvas.height = cropH;
-            const tCtx = tempCanvas.getContext('2d');
-            
-            // Nur den wichtigen Teil vom Video zeichnen
-            tCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            tempCanvas.getContext('2d').drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
             const { data: { words } } = await worker.recognize(tempCanvas);
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            let matchFound = false;
+            let match = false;
 
             words.forEach(w => {
                 const txt = w.text.toUpperCase().replace(/[^A-Z0-9]/g, "");
                 if (txt.length > 3) {
-                    // Koordinaten zurück auf das Hauptbild rechnen
                     const x = w.bbox.x0 + cropX;
                     const y = w.bbox.y0 + cropY;
                     
-                    let hit = false;
-                    WATCHLIST.forEach(p => { if (txt.includes(p)) hit = true; });
+                    let isTarget = WATCHLIST.some(p => txt.includes(p));
 
-                    ctx.lineWidth = 8;
-                    ctx.strokeStyle = hit ? "#4cd964" : "#ff3b30";
+                    ctx.lineWidth = 10;
+                    ctx.strokeStyle = isTarget ? "#4cd964" : "#ff3b30";
                     ctx.strokeRect(x, y, (w.bbox.x1 - w.bbox.x0), (w.bbox.y1 - w.bbox.y0));
 
-                    if (hit) {
-                        matchFound = true;
+                    if (isTarget) {
+                        match = true;
                         triggerAlarm(txt);
                     }
                 }
             });
 
-            if (!matchFound && status.classList.contains('alarm')) {
-                status.innerText = "SCANNER AKTIV";
+            if (!match && status.classList.contains('alarm')) {
+                status.innerText = "✓ SCANNER BEREIT";
                 status.classList.remove('alarm');
             }
 
             isProcessing = false;
-            requestAnimationFrame(scan);
+            // Kurze Pause einbauen, damit das Handy nicht schmilzt (50ms)
+            setTimeout(() => { requestAnimationFrame(scanLoop); }, 50);
         }
 
         function triggerAlarm(plate) {
-            status.innerText = "!!! TREFFER: " + plate + " !!!";
+            status.innerText = "!!! " + plate + " !!!";
             status.classList.add('alarm');
             
-            const speech = new SpeechSynthesisUtterance("Achtung, " + plate);
+            const speech = new SpeechSynthesisUtterance("Gefunden " + plate);
             speech.lang = 'de-DE';
             window.speechSynthesis.speak(speech);
         }
 
-        startBtn.addEventListener('click', init);
+        startLayer.addEventListener('click', init);
     </script>
 </body>
 </html>
