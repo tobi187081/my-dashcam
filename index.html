@@ -3,68 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Turbo AI Dashcam</title>
+    <title>AI Dashcam Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        body { margin: 0; background: #000; color: #fff; font-family: -apple-system, sans-serif; overflow: hidden; }
         #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; }
         #canvasOverlay { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; }
-        #ui { position: absolute; top: 10px; width: 100%; text-align: center; z-index: 20; }
-        .badge { background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; border: 1px solid #444; }
-        .alarm { background: rgba(255, 0, 0, 0.9) !important; border: 2px solid #fff; font-weight: bold; animation: blink 0.5s infinite; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        /* Fokus-Rahmen in der Mitte */
+        #focus-area { 
+            position: absolute; top: 50%; left: 50%; 
+            width: 80%; height: 30%; 
+            transform: translate(-50%, -50%);
+            border: 2px dashed rgba(255,255,255,0.5);
+            z-index: 15; border-radius: 10px;
+        }
+
+        #ui { position: absolute; top: 40px; width: 100%; text-align: center; z-index: 20; }
+        .badge { background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #444; font-size: 18px; }
+        .alarm { background: #ff3b30 !important; color: white; font-weight: bold; animation: pulse 0.5s infinite; }
+        
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        
+        #btn-start { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.9); z-index: 100; display: flex; 
+            align-items: center; justify-content: center; font-size: 24px; cursor: pointer;
+        }
     </style>
 </head>
 <body>
 
-    <video id="video" autoplay playsinline></video>
+    <div id="btn-start">🚀 TIPPEN ZUM STARTEN</div>
+
+    <video id="video" autoplay playsinline muted></video>
+    <div id="focus-area"></div>
     <canvas id="canvasOverlay"></canvas>
     
     <div id="ui">
-        <div id="status" class="badge">INITIALISIERUNG...</div>
+        <div id="status" class="badge">BEREIT</div>
     </div>
 
     <script>
-        const WATCHLIST = ["BMW123", "HHRS567", "MXY999", "TEST", "ABC"];
+        const WATCHLIST = ["BMW123", "HHRS567", "MXY999", "TEST", "WISSEN"];
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvasOverlay');
         const ctx = canvas.getContext('2d');
         const status = document.getElementById('status');
+        const startBtn = document.getElementById('btn-start');
 
         let worker = null;
         let isProcessing = false;
 
         async function init() {
-            // 1. Kamera-Stream in hoher Auflösung für die Anzeige
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
-            });
-            video.srcObject = stream;
+            startBtn.style.display = 'none';
+            status.innerText = "Kamera wird gestartet...";
 
-            // 2. Tesseract Worker einmalig im Hintergrund laden (spart Zeit!)
-            status.innerText = "KI-MODUL LÄDT...";
-            worker = await Tesseract.createWorker('deu'); // Deutsch für Kennzeichen-Logik
-            
-            video.onloadedmetadata = () => {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                status.innerText = "ECHTZEIT-SCANNER AKTIV";
-                scan();
-            };
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: 1280, height: 720 } 
+                });
+                video.srcObject = stream;
+                
+                status.innerText = "KI wird geladen...";
+                worker = await Tesseract.createWorker('deu'); 
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    status.innerText = "SCANNER AKTIV";
+                    requestAnimationFrame(scan);
+                };
+            } catch (err) {
+                status.innerText = "Fehler: " + err.name;
+                alert("Kamerazugriff fehlgeschlagen. Nutze HTTPS!");
+            }
         }
 
         async function scan() {
-            if (isProcessing) return;
+            if (isProcessing) {
+                requestAnimationFrame(scan);
+                return;
+            }
+            
             isProcessing = true;
 
-            // Wir erstellen ein verkleinertes Bild für die KI (Viel schneller!)
-            const tempCanvas = document.createElement('canvas');
-            const tCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = video.videoWidth / 2;
-            tempCanvas.height = video.videoHeight / 2;
-            tCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+            // Wir schneiden nur den Fokus-Bereich aus (Performance!)
+            const cropX = video.videoWidth * 0.1;
+            const cropY = video.videoHeight * 0.35;
+            const cropW = video.videoWidth * 0.8;
+            const cropH = video.videoHeight * 0.3;
 
-            // Erkennung starten
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = cropW;
+            tempCanvas.height = cropH;
+            const tCtx = tempCanvas.getContext('2d');
+            
+            // Nur den wichtigen Teil vom Video zeichnen
+            tCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
             const { data: { words } } = await worker.recognize(tempCanvas);
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -73,19 +110,16 @@
             words.forEach(w => {
                 const txt = w.text.toUpperCase().replace(/[^A-Z0-9]/g, "");
                 if (txt.length > 3) {
-                    // Rahmen skalieren, da wir auf dem kleinen Canvas gescannt haben
-                    const x = w.bbox.x0 * 2;
-                    const y = w.bbox.y0 * 2;
-                    const width = (w.bbox.x1 - w.bbox.x0) * 2;
-                    const height = (w.bbox.y1 - w.bbox.y0) * 2;
-
+                    // Koordinaten zurück auf das Hauptbild rechnen
+                    const x = w.bbox.x0 + cropX;
+                    const y = w.bbox.y0 + cropY;
+                    
                     let hit = false;
                     WATCHLIST.forEach(p => { if (txt.includes(p)) hit = true; });
 
-                    // Zeichnen
-                    ctx.lineWidth = 6;
-                    ctx.strokeStyle = hit ? "#00FF00" : "#FF0000";
-                    ctx.strokeRect(x, y, width, height);
+                    ctx.lineWidth = 8;
+                    ctx.strokeStyle = hit ? "#4cd964" : "#ff3b30";
+                    ctx.strokeRect(x, y, (w.bbox.x1 - w.bbox.x0), (w.bbox.y1 - w.bbox.y0));
 
                     if (hit) {
                         matchFound = true;
@@ -94,13 +128,12 @@
                 }
             });
 
-            if (!matchFound) {
+            if (!matchFound && status.classList.contains('alarm')) {
+                status.innerText = "SCANNER AKTIV";
                 status.classList.remove('alarm');
-                if (!status.innerText.includes("SCANNER")) status.innerText = "ECHTZEIT-SCANNER AKTIV";
             }
 
             isProcessing = false;
-            // Sofort den nächsten Frame anfordern (Echtzeit-Loop)
             requestAnimationFrame(scan);
         }
 
@@ -108,15 +141,12 @@
             status.innerText = "!!! TREFFER: " + plate + " !!!";
             status.classList.add('alarm');
             
-            // Sound & Sprache (nur wenn Nutzer einmal geklickt hat)
-            const speech = new SpeechSynthesisUtterance("Achtung, Kennzeichen " + plate);
+            const speech = new SpeechSynthesisUtterance("Achtung, " + plate);
             speech.lang = 'de-DE';
-            speech.rate = 1.2;
             window.speechSynthesis.speak(speech);
         }
 
-        window.onclick = () => { init(); }; // Startet beim ersten Tap
-        status.innerText = "BITTE EINMAL TIPPEN ZUM STARTEN";
+        startBtn.addEventListener('click', init);
     </script>
 </body>
 </html>
